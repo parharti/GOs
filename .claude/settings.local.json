@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3:*)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\(''C:/Users/sharm/desktop/file/upload_files.py''\\).read\\(\\)\\); print\\(''upload_files.py: OK''\\)\")",
+      "Bash(python -c:*)"
+    ]
+  }
+}

@@ -1,0 +1,17 @@
+# Environment
+.env
+.venv/
+venv/
+__pycache__/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+nul
+Thumbs.db
+.DS_Store
+
+# Chainlit
+.chainlit/

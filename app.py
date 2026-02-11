@@ -18,7 +18,7 @@ from google.genai import types
 load_dotenv()
 
 STORE_CONFIG_FILE = "store_config.json"
-MODEL = "gemini-2.5-flash"
+MODEL = "gemini-2.5-pro"
 
 SYSTEM_PROMPT = (
     "You are a Tamil Nadu Government Orders (GO) search assistant powered by TNe-GA. "

@@ -154,52 +154,59 @@ jobs:
             | # | Name | Type | Language | Lines | Issues |
           """
 
-          prompt = f"""You are a **senior code reviewer** for a team that works with
-          Python, PHP, Node.js, React, and PostgreSQL.
+          prompt = f"""You are a senior code reviewer. Be CONCISE. No long paragraphs.
+          Only flag real problems — skip obvious or trivial observations.
 
-          Review the following pull request code and produce a structured report
-          covering ALL of the sections below.  Follow the team's style guide
-          (logging required, no infinite loops, clear logic, SQL safety).
+          Review this PR and output EXACTLY this format:
 
-          ---
+          ## Issues
 
-          ## 1. Logical Errors
-          - Identify bugs, off-by-one errors, null/undefined risks, race conditions,
-            incorrect boolean logic, wrong operator usage, unreachable code.
-          - For each issue give: file, line (approx), severity (🔴 Critical / 🟡 Warning / 🔵 Info),
-            and a suggested fix.
+          A single table with ALL problems found. Nothing else before or after the table
+          in this section. Sort by severity.
 
-          ## 2. Loop Analysis
-          - Find all loops (for, while, foreach, map, reduce, recursive calls).
-          - Flag: potential infinite loops, O(n²)+ nested loops, missing break/return,
-            large dataset iteration without pagination/streaming.
-          - Suggest optimizations where applicable.
+          | Severity | File | Line | Issue | Fix |
+          |----------|------|------|-------|-----|
 
-          ## 3. Logging Audit
-          - Every function/method/route handler MUST have at least entry-level logging.
-          - Flag any function that is missing logging entirely.
-          - Check log levels are appropriate (debug vs info vs error).
-          - Ensure sensitive data (passwords, tokens, PII) is NOT logged.
-          - For each violation give: file, function name, what's missing.
+          Severity: 🔴 Critical / 🟡 Warning / 🔵 Info
+          - Keep "Issue" column to ONE short sentence
+          - Keep "Fix" column to ONE short sentence or a tiny code snippet
 
-          ## 4. Flowchart (Mermaid)
-          - Produce a **Mermaid flowchart** (`graph TD`) that shows the main
-            control flow of the PR's logic.
-          - Include decision nodes, loops, error paths, and external calls
-            (DB queries, API calls).
-          - Keep it readable (max ~30 nodes). If the PR is large, focus on
-            the most critical path.
+          ## Verdict
+
+          One line: ✅ Approve / ⚠️ Approve with comments / ❌ Request changes
+
+          Top 3 fixes (one line each, numbered).
+
+          ## Flowchart
+
+          A Mermaid flowchart of the main control flow.
+
+          STRICT MERMAID RULES — violating ANY of these will break rendering:
+          - Use graph TD
+          - Node labels MUST use ONLY square brackets: A[My Label]
+          - NEVER use quotes anywhere in the diagram — no double quotes, no single quotes
+          - NEVER use parentheses in labels — write O n2 not O(n2)
+          - NEVER use colons in labels — write Step 1 Start not Step 1: Start
+          - NEVER use special characters: no emoji, no ?, no !, no semicolons
+          - Decision nodes use curly braces: A{{Is Valid}}
+          - Edge labels: A -->|yes| B  or  A --> B
+          - Max 20 nodes. Focus on the critical path only.
+
+          Example of CORRECT syntax:
+          ```mermaid
+          graph TD
+            A[Start] --> B{{Check Input}}
+            B -->|valid| C[Process Data]
+            B -->|invalid| D[Return Error]
+            C --> E[Save Result]
+            E --> F[End]
+          ```
 
           {sql_section}
 
-          ## 6. Overall Summary
-          - Total issues by severity
-          - Merge recommendation: ✅ Approve / ⚠️ Approve with comments / ❌ Request changes
-          - Top 3 things to fix before merge
-
           ---
 
-          **CODE TO REVIEW:**
+          **CODE:**
 
           {all_code}
           """

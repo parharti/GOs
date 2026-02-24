@@ -189,6 +189,12 @@ jobs:
             (DB queries, API calls).
           - Keep it readable (max ~30 nodes). If the PR is large, focus on
             the most critical path.
+          - IMPORTANT: Do NOT use emojis or special unicode characters inside
+            Mermaid node labels or edge labels. GitHub's Mermaid renderer
+            cannot parse them and will fail. Use plain text only
+            (e.g., "CRITICAL: Infinite Loop" not "🔴 Infinite Loop").
+          - Do NOT use parentheses inside node labels. Replace them with
+            dashes or remove them (e.g., "O n-squared" not "O(n²)").
 
           {sql_section}
 

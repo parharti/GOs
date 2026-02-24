@@ -22,7 +22,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  GEMINI_MODEL: "gemini-2.5-pro-preview-06-05"
+  GEMINI_MODEL: "gemini-2.5-pro"
   MAX_FILES: 50
   SUPPORTED_EXTENSIONS: "py,php,js,jsx,ts,tsx,sql,pgsql"
 
@@ -110,7 +110,7 @@ jobs:
           REPO_NAME      = os.environ["REPO_NAME"]
           FILES_JSON     = json.loads(os.environ["FILES_JSON"])
           HAS_SQL        = os.environ.get("HAS_SQL", "false") == "true"
-          MODEL          = os.environ.get("GEMINI_MODEL", "gemini-2.5-pro-preview-06-05")
+          MODEL          = os.environ.get("GEMINI_MODEL", "gemini-2.5-pro")
 
           client = genai.Client(api_key=GEMINI_API_KEY)
           gh     = Github(GITHUB_TOKEN)

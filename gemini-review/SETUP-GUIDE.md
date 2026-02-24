@@ -147,7 +147,7 @@ Edit the `GEMINI_MODEL` env variable in `gemini-code-review.yml`:
 
 ```yaml
 env:
-  GEMINI_MODEL: "gemini-2.5-pro-preview-06-05"  # Change this
+  GEMINI_MODEL: "gemini-2.5-pro"  # Change this
 ```
 
 ### Change Review Branches

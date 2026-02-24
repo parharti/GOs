@@ -1,0 +1,211 @@
+# ============================================================================
+# gemini-sql-audit.yml
+# Weekly scheduled scan — counts all PostgreSQL procedures, functions,
+# and triggers across the repo. Creates a GitHub Issue report every Monday.
+# ============================================================================
+
+name: "Gemini SQL Audit (Weekly)"
+
+on:
+  schedule:
+    - cron: "0 7 * * 1"          # Every Monday at 07:00 UTC
+  workflow_dispatch:               # Allow manual trigger
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  sql-audit:
+    name: "PostgreSQL Procedure Audit"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install google-genai requests PyGithub
+
+      - name: Collect all SQL files
+        id: collect
+        run: |
+          # Find all SQL files in the repo
+          FILES=$(find . -type f \( -name "*.sql" -o -name "*.pgsql" \) \
+            | grep -v node_modules \
+            | grep -v .git \
+            | grep -v vendor \
+            | sort || true)
+
+          if [ -z "$FILES" ]; then
+            echo "has_files=false" >> "$GITHUB_OUTPUT"
+            echo "📭 No SQL files found in repository."
+            exit 0
+          fi
+
+          FILE_COUNT=$(echo "$FILES" | wc -l)
+          JSON=$(echo "$FILES" | jq -R -s -c 'split("\n") | map(select(length > 0))')
+
+          echo "has_files=true" >> "$GITHUB_OUTPUT"
+          echo "files_json=$JSON" >> "$GITHUB_OUTPUT"
+          echo "file_count=$FILE_COUNT" >> "$GITHUB_OUTPUT"
+          echo "📁 Found $FILE_COUNT SQL file(s)"
+
+      - name: Run Gemini SQL Audit
+        if: steps.collect.outputs.has_files == 'true'
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO_NAME: ${{ github.repository }}
+          FILES_JSON: ${{ steps.collect.outputs.files_json }}
+          FILE_COUNT: ${{ steps.collect.outputs.file_count }}
+        run: |
+          cat << 'PYEOF' > /tmp/gemini_sql_audit.py
+          import os, json
+          from datetime import datetime
+          from google import genai
+          from google.genai import types
+          from github import Github
+
+          GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
+          GITHUB_TOKEN   = os.environ["GITHUB_TOKEN"]
+          REPO_NAME      = os.environ["REPO_NAME"]
+          FILES_JSON     = json.loads(os.environ["FILES_JSON"])
+          FILE_COUNT     = os.environ["FILE_COUNT"]
+          MODEL          = "gemini-2.5-pro-preview-06-05"
+
+          client = genai.Client(api_key=GEMINI_API_KEY)
+          gh     = Github(GITHUB_TOKEN)
+          repo   = gh.get_repo(REPO_NAME)
+
+          # ── Read all SQL files ─────────────────────────────────────
+          sql_blocks = []
+          for fpath in FILES_JSON:
+              try:
+                  with open(fpath, "r", errors="replace") as f:
+                      content = f.read()
+                  sql_blocks.append(f"### File: `{fpath}`\n```sql\n{content}\n```")
+              except Exception as e:
+                  sql_blocks.append(f"### File: `{fpath}`\n⚠️ Could not read: {e}")
+
+          all_sql = "\n\n".join(sql_blocks)
+          if len(all_sql) > 900_000:
+              all_sql = all_sql[:900_000] + "\n\n... [truncated]"
+
+          # ── Audit prompt ───────────────────────────────────────────
+          prompt = f"""You are a **PostgreSQL database architect** performing a
+          weekly audit of all SQL files in a repository.
+
+          Analyze ALL SQL files and produce a comprehensive report:
+
+          ## 📊 Inventory Summary
+
+          | Metric | Count |
+          |--------|-------|
+          | Total SQL files | |
+          | Functions (CREATE FUNCTION) | |
+          | Procedures (CREATE PROCEDURE) | |
+          | Triggers (CREATE TRIGGER) | |
+          | Views (CREATE VIEW) | |
+          | Indexes (CREATE INDEX) | |
+          | Tables (CREATE TABLE) | |
+          | Materialized Views | |
+          | Total Lines of SQL | |
+
+          ## 📋 Complete Procedure & Function Catalog
+
+          List EVERY procedure and function found:
+
+          | # | Name | Type | Language | File | Lines | Params | Returns | Security |
+          |---|------|------|----------|------|-------|--------|---------|----------|
+
+          ## 🔄 Trigger Inventory
+
+          | # | Trigger Name | Table | Event | Timing | Function Called | File |
+          |---|-------------|-------|-------|--------|-----------------|------|
+
+          ## ⚠️ Issues Found
+
+          For each issue:
+          - **File**: path
+          - **Issue**: description
+          - **Severity**: 🔴 Critical / 🟡 Warning / 🔵 Info
+          - **Recommendation**: fix
+
+          Check for:
+          1. Functions without explicit `SECURITY DEFINER` or `SECURITY INVOKER`
+          2. Missing `RETURNS` type specification
+          3. Functions without error handling (missing `EXCEPTION` blocks)
+          4. Raw string concatenation (SQL injection risk)
+          5. Missing `VOLATILE`/`STABLE`/`IMMUTABLE` markers
+          6. Procedures exceeding 100 lines (complexity warning)
+          7. Duplicate function signatures
+          8. Missing comments/documentation on procedures
+          9. Deprecated syntax usage
+          10. Missing transaction handling
+
+          ## 📈 Complexity Report
+
+          Top 10 most complex procedures by cyclomatic complexity estimate:
+
+          | # | Name | File | Lines | IF/CASE branches | Loops | Complexity |
+          |---|------|------|-------|-------------------|-------|------------|
+
+          ## 💡 Recommendations
+
+          Provide top 5 actionable recommendations for the SQL codebase.
+
+          ---
+
+          **SQL FILES TO AUDIT:**
+
+          {all_sql}
+          """
+
+          print(f"📊 Running weekly SQL audit with {MODEL}...")
+
+          response = client.models.generate_content(
+              model=MODEL,
+              contents=prompt,
+              config=types.GenerateContentConfig(
+                  temperature=0.1,
+                  max_output_tokens=16384,
+              ),
+          )
+
+          audit_text = response.text
+          today = datetime.now().strftime("%Y-%m-%d")
+
+          # ── Create GitHub Issue ────────────────────────────────────
+          issue_title = f"📊 Weekly SQL Audit Report — {today}"
+          issue_body = (
+              f"## 📊 Weekly PostgreSQL Audit — {today}\n\n"
+              f"**SQL files scanned:** {FILE_COUNT}\n"
+              f"**Model:** `{MODEL}`\n\n"
+              f"---\n\n"
+              f"{audit_text}\n\n"
+              f"---\n"
+              f"*Automated audit by Gemini · Runs every Monday*"
+          )
+
+          if len(issue_body) > 65000:
+              issue_body = issue_body[:64500] + "\n\n... [truncated]"
+
+          issue = repo.create_issue(
+              title=issue_title,
+              body=issue_body,
+              labels=["sql-audit", "automated"]
+          )
+
+          print(f"📋 Created issue #{issue.number}: {issue_title}")
+          PYEOF
+
+          python /tmp/gemini_sql_audit.py
+
+      - name: No SQL files found
+        if: steps.collect.outputs.has_files == 'false'
+        run: echo "📭 No SQL files in the repo — nothing to audit."

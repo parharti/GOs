@@ -1,0 +1,221 @@
+# ============================================================================
+# gemini-security-review.yml
+# Triggers ONLY when auth / API / DB files change — deeper security scan
+# Stack: Python · PHP · Node.js · React · PostgreSQL
+# ============================================================================
+
+name: "Gemini Security Review"
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [main, develop, staging]
+    paths:
+      # Auth / session / token files
+      - "**/auth/**"
+      - "**/authentication/**"
+      - "**/middleware/auth*"
+      - "**/passport*"
+      - "**/jwt*"
+      - "**/oauth*"
+      - "**/session*"
+      - "**/login*"
+      - "**/signup*"
+      - "**/register*"
+      # API routes & controllers
+      - "**/api/**"
+      - "**/routes/**"
+      - "**/controllers/**"
+      - "**/views.py"
+      - "**/urls.py"
+      # Database
+      - "**/models/**"
+      - "**/migrations/**"
+      - "**/schema*"
+      - "**/*.sql"
+      - "**/*.pgsql"
+      - "**/db/**"
+      - "**/database/**"
+      - "**/sequelize*"
+      - "**/knex*"
+      - "**/prisma/**"
+      # Config / env
+      - "**/.env*"
+      - "**/config/**"
+      - "**/settings.py"
+      - "**/docker-compose*"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: gemini-security-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  security-scan:
+    name: "Gemini Deep Security Scan"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install google-genai requests PyGithub
+
+      - name: Collect security-relevant files
+        id: collect
+        run: |
+          FILES=$(git diff --name-only --diff-filter=ACMR origin/${{ github.base_ref }}...HEAD \
+            | grep -E '\.(py|php|js|jsx|ts|tsx|sql|pgsql|env|json|yaml|yml)$' \
+            | head -n 40 || true)
+
+          if [ -z "$FILES" ]; then
+            echo "has_files=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          JSON=$(echo "$FILES" | jq -R -s -c 'split("\n") | map(select(length > 0))')
+          echo "has_files=true" >> "$GITHUB_OUTPUT"
+          echo "files_json=$JSON" >> "$GITHUB_OUTPUT"
+
+      - name: Run Gemini Security Review
+        if: steps.collect.outputs.has_files == 'true'
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO_NAME: ${{ github.repository }}
+          FILES_JSON: ${{ steps.collect.outputs.files_json }}
+        run: |
+          cat << 'PYEOF' > /tmp/gemini_security.py
+          import os, json
+          from google import genai
+          from google.genai import types
+          from github import Github
+
+          GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
+          GITHUB_TOKEN   = os.environ["GITHUB_TOKEN"]
+          PR_NUMBER      = int(os.environ["PR_NUMBER"])
+          REPO_NAME      = os.environ["REPO_NAME"]
+          FILES_JSON     = json.loads(os.environ["FILES_JSON"])
+          MODEL          = "gemini-2.5-pro-preview-06-05"
+
+          client = genai.Client(api_key=GEMINI_API_KEY)
+          gh     = Github(GITHUB_TOKEN)
+          repo   = gh.get_repo(REPO_NAME)
+          pr     = repo.get_pull(PR_NUMBER)
+
+          # ── Read files ─────────────────────────────────────────────
+          code_blocks = []
+          for fpath in FILES_JSON:
+              try:
+                  with open(fpath, "r", errors="replace") as f:
+                      content = f.read()
+                  ext = fpath.rsplit(".", 1)[-1]
+                  code_blocks.append(f"### File: `{fpath}`\n```{ext}\n{content}\n```")
+              except Exception as e:
+                  code_blocks.append(f"### File: `{fpath}`\n⚠️ Could not read: {e}")
+
+          all_code = "\n\n".join(code_blocks)
+          if len(all_code) > 900_000:
+              all_code = all_code[:900_000] + "\n\n... [truncated]"
+
+          # ── Security-focused prompt ────────────────────────────────
+          prompt = f"""You are a **senior application security engineer** reviewing
+          a pull request that touches authentication, API, or database files.
+          The stack is Python, PHP, Node.js, React, and PostgreSQL.
+
+          Perform a DEEP security review covering:
+
+          ## 🔐 1. Authentication & Authorization
+          - Broken authentication patterns (missing checks, weak tokens)
+          - Missing or incorrect role-based access control (RBAC)
+          - Session management issues (fixation, expiry, insecure cookies)
+          - JWT issues (none algorithm, missing expiry, secret in code)
+          - Password handling (plain text, weak hashing, no salting)
+
+          ## 🛡️ 2. Injection Vulnerabilities
+          - SQL Injection (raw queries, string concat, missing parameterization)
+          - XSS (unsanitized output in React/PHP, dangerouslySetInnerHTML)
+          - Command injection (exec, shell_exec, child_process)
+          - LDAP / NoSQL / Header injection
+          - Path traversal
+
+          ## 🌐 3. API Security
+          - Missing rate limiting
+          - Missing input validation / schema validation
+          - CORS misconfiguration
+          - Mass assignment / over-posting
+          - Information leakage in error responses
+          - Missing HTTPS enforcement
+
+          ## 🗄️ 4. Database Security (PostgreSQL)
+          - Unparameterized queries
+          - Excessive privileges (SECURITY DEFINER misuse)
+          - Missing row-level security where needed
+          - Exposed connection strings
+          - Missing transaction handling for multi-step operations
+
+          ## 🔑 5. Secrets & Configuration
+          - Hardcoded secrets, API keys, passwords
+          - .env files committed or exposed
+          - Insecure default configurations
+          - Debug mode enabled in production paths
+
+          ## 📊 6. Risk Summary Table
+
+          | # | Issue | Severity | File | Line | OWASP Category |
+          |---|-------|----------|------|------|----------------|
+
+          Severity: 🔴 Critical · 🟠 High · 🟡 Medium · 🔵 Low
+
+          ## 7. Recommendation
+          - Merge decision: ✅ / ⚠️ / ❌
+          - Top 3 security fixes required before merge
+
+          ---
+
+          **CODE TO REVIEW:**
+
+          {all_code}
+          """
+
+          print(f"🔒 Running security scan with {MODEL}...")
+
+          response = client.models.generate_content(
+              model=MODEL,
+              contents=prompt,
+              config=types.GenerateContentConfig(
+                  temperature=0.1,
+                  max_output_tokens=16384,
+              ),
+          )
+
+          review_text = response.text
+
+          HEADER = "## 🔒 Gemini Security Review\n\n"
+          FOOTER = (
+              "\n\n---\n"
+              "*Security scan by Gemini · "
+              f"Model: `{MODEL}` · "
+              f"Files scanned: {len(FILES_JSON)}*"
+          )
+
+          comment_body = HEADER + review_text + FOOTER
+          if len(comment_body) > 65000:
+              comment_body = comment_body[:64500] + "\n\n... [truncated]" + FOOTER
+
+          pr.create_issue_comment(comment_body)
+          print(f"🔒 Posted security review on PR #{PR_NUMBER}")
+          PYEOF
+
+          python /tmp/gemini_security.py

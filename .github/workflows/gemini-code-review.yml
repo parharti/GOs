@@ -1,0 +1,250 @@
+# ============================================================================
+# gemini-code-review.yml
+# Reviews every PR for: logical errors, loops, logging, SQL audit,
+# flowcharts, and summary.
+# Stack: Python · PHP · Node.js · React · PostgreSQL
+# ============================================================================
+
+name: "Gemini Code Review"
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [main, develop, staging]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: gemini-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  GEMINI_MODEL: "gemini-2.5-pro-preview-06-05"
+  MAX_FILES: 50
+  SUPPORTED_EXTENSIONS: "py,php,js,jsx,ts,tsx,sql,pgsql"
+
+jobs:
+  # ── 1. Collect changed files ───────────────────────────────────────────
+  collect-changes:
+    name: "Collect Changed Files"
+    runs-on: ubuntu-latest
+    outputs:
+      files_json: ${{ steps.diff.outputs.files_json }}
+      has_files: ${{ steps.diff.outputs.has_files }}
+      has_sql: ${{ steps.diff.outputs.has_sql }}
+      file_count: ${{ steps.diff.outputs.file_count }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get changed files
+        id: diff
+        run: |
+          FILES=$(git diff --name-only --diff-filter=ACMR origin/${{ github.base_ref }}...HEAD \
+            | grep -E '\.(py|php|js|jsx|ts|tsx|sql|pgsql)$' \
+            | head -n ${{ env.MAX_FILES }} || true)
+
+          if [ -z "$FILES" ]; then
+            echo "has_files=false" >> "$GITHUB_OUTPUT"
+            echo "files_json=[]" >> "$GITHUB_OUTPUT"
+            echo "file_count=0" >> "$GITHUB_OUTPUT"
+            echo "has_sql=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          FILE_COUNT=$(echo "$FILES" | wc -l)
+          JSON=$(echo "$FILES" | jq -R -s -c 'split("\n") | map(select(length > 0))')
+          HAS_SQL=$(echo "$FILES" | grep -qE '\.(sql|pgsql)$' && echo "true" || echo "false")
+
+          echo "has_files=true" >> "$GITHUB_OUTPUT"
+          echo "files_json=$JSON" >> "$GITHUB_OUTPUT"
+          echo "file_count=$FILE_COUNT" >> "$GITHUB_OUTPUT"
+          echo "has_sql=$HAS_SQL" >> "$GITHUB_OUTPUT"
+          echo "📁 Found $FILE_COUNT file(s) to review"
+
+  # ── 2. Gemini Full Review ──────────────────────────────────────────────
+  gemini-review:
+    name: "Gemini Review — All 6 Checks"
+    needs: collect-changes
+    if: needs.collect-changes.outputs.has_files == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install google-genai requests PyGithub
+
+      - name: Run Gemini Review
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO_NAME: ${{ github.repository }}
+          FILES_JSON: ${{ needs.collect-changes.outputs.files_json }}
+          HAS_SQL: ${{ needs.collect-changes.outputs.has_sql }}
+        run: |
+          cat << 'PYEOF' > /tmp/gemini_review.py
+          import os, json, sys
+          from google import genai
+          from google.genai import types
+          from github import Github
+
+          # ── Config ──────────────────────────────────────────────────
+          GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
+          GITHUB_TOKEN   = os.environ["GITHUB_TOKEN"]
+          PR_NUMBER      = int(os.environ["PR_NUMBER"])
+          REPO_NAME      = os.environ["REPO_NAME"]
+          FILES_JSON     = json.loads(os.environ["FILES_JSON"])
+          HAS_SQL        = os.environ.get("HAS_SQL", "false") == "true"
+          MODEL          = os.environ.get("GEMINI_MODEL", "gemini-2.5-pro-preview-06-05")
+
+          client = genai.Client(api_key=GEMINI_API_KEY)
+          gh     = Github(GITHUB_TOKEN)
+          repo   = gh.get_repo(REPO_NAME)
+          pr     = repo.get_pull(PR_NUMBER)
+
+          # ── Read files ─────────────────────────────────────────────
+          code_blocks = []
+          for fpath in FILES_JSON:
+              try:
+                  with open(fpath, "r", errors="replace") as f:
+                      content = f.read()
+                  ext = fpath.rsplit(".", 1)[-1] if "." in fpath else ""
+                  lang_map = {
+                      "py": "python", "php": "php", "js": "javascript",
+                      "jsx": "jsx", "ts": "typescript", "tsx": "tsx",
+                      "sql": "sql", "pgsql": "sql"
+                  }
+                  lang = lang_map.get(ext, ext)
+                  code_blocks.append(f"### File: `{fpath}`\n```{lang}\n{content}\n```")
+              except Exception as e:
+                  code_blocks.append(f"### File: `{fpath}`\n⚠️ Could not read: {e}")
+
+          all_code = "\n\n".join(code_blocks)
+
+          # ── Truncate if too large (Gemini context limit) ───────────
+          MAX_CHARS = 900_000
+          if len(all_code) > MAX_CHARS:
+              all_code = all_code[:MAX_CHARS] + "\n\n... [truncated — too many files]"
+
+          # ── Build the prompt ───────────────────────────────────────
+          sql_section = ""
+          if HAS_SQL:
+              sql_section = """
+          ## 5. PostgreSQL Procedure Audit
+          - Count ALL stored procedures, functions, and triggers found
+          - List each one: name, type (FUNCTION / PROCEDURE / TRIGGER), language (plpgsql / sql / plv8)
+          - Flag any procedure missing explicit `SECURITY DEFINER` / `SECURITY INVOKER`
+          - Flag any raw string concatenation that could cause SQL injection
+          - Provide a summary table:
+            | # | Name | Type | Language | Lines | Issues |
+          """
+
+          prompt = f"""You are a **senior code reviewer** for a team that works with
+          Python, PHP, Node.js, React, and PostgreSQL.
+
+          Review the following pull request code and produce a structured report
+          covering ALL of the sections below.  Follow the team's style guide
+          (logging required, no infinite loops, clear logic, SQL safety).
+
+          ---
+
+          ## 1. Logical Errors
+          - Identify bugs, off-by-one errors, null/undefined risks, race conditions,
+            incorrect boolean logic, wrong operator usage, unreachable code.
+          - For each issue give: file, line (approx), severity (🔴 Critical / 🟡 Warning / 🔵 Info),
+            and a suggested fix.
+
+          ## 2. Loop Analysis
+          - Find all loops (for, while, foreach, map, reduce, recursive calls).
+          - Flag: potential infinite loops, O(n²)+ nested loops, missing break/return,
+            large dataset iteration without pagination/streaming.
+          - Suggest optimizations where applicable.
+
+          ## 3. Logging Audit
+          - Every function/method/route handler MUST have at least entry-level logging.
+          - Flag any function that is missing logging entirely.
+          - Check log levels are appropriate (debug vs info vs error).
+          - Ensure sensitive data (passwords, tokens, PII) is NOT logged.
+          - For each violation give: file, function name, what's missing.
+
+          ## 4. Flowchart (Mermaid)
+          - Produce a **Mermaid flowchart** (`graph TD`) that shows the main
+            control flow of the PR's logic.
+          - Include decision nodes, loops, error paths, and external calls
+            (DB queries, API calls).
+          - Keep it readable (max ~30 nodes). If the PR is large, focus on
+            the most critical path.
+
+          {sql_section}
+
+          ## 6. Overall Summary
+          - Total issues by severity
+          - Merge recommendation: ✅ Approve / ⚠️ Approve with comments / ❌ Request changes
+          - Top 3 things to fix before merge
+
+          ---
+
+          **CODE TO REVIEW:**
+
+          {all_code}
+          """
+
+          # ── Call Gemini ────────────────────────────────────────────
+          print(f"🤖 Calling {MODEL} with ~{len(prompt)//1000}k chars...")
+
+          response = client.models.generate_content(
+              model=MODEL,
+              contents=prompt,
+              config=types.GenerateContentConfig(
+                  temperature=0.2,
+                  max_output_tokens=16384,
+              ),
+          )
+
+          review_text = response.text
+          print(f"✅ Gemini responded with {len(review_text)} chars")
+
+          # ── Post to PR ─────────────────────────────────────────────
+          HEADER = "## 🤖 Gemini Code Review\n\n"
+          FOOTER = (
+              "\n\n---\n"
+              "*Automated review by Gemini · "
+              f"Model: `{MODEL}` · "
+              f"Files reviewed: {len(FILES_JSON)}*"
+          )
+
+          comment_body = HEADER + review_text + FOOTER
+
+          # GitHub has a 65536 char limit for comments
+          if len(comment_body) > 65000:
+              comment_body = comment_body[:64500] + "\n\n... [truncated]" + FOOTER
+
+          pr.create_issue_comment(comment_body)
+          print(f"💬 Posted review comment on PR #{PR_NUMBER}")
+          PYEOF
+
+          python /tmp/gemini_review.py
+
+  # ── 3. Post skip notice if no files ────────────────────────────────────
+  skip-notice:
+    name: "No reviewable files"
+    needs: collect-changes
+    if: needs.collect-changes.outputs.has_files == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "⏭️ No supported files changed — skipping Gemini review."

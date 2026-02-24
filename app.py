@@ -8,12 +8,18 @@ Usage:
 """
 
 import json
+import logging
 import os
+import time
 
 import chainlit as cl
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
+
+from analytics import track_query
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -120,6 +126,10 @@ async def on_message(message: cl.Message):
     contents.append(types.Content(role="user", parts=[types.Part(text=message.content)]))
 
     # Show thinking step while searching
+    start_time = time.time()
+    sources_found = 0
+    success = False
+
     async with cl.Step(name="Searching Government Orders...", type="tool") as step:
         step.output = "Looking through GO documents for relevant information..."
 
@@ -142,10 +152,23 @@ async def on_message(message: cl.Message):
             citations = format_citations(response)
             full_response = answer + citations
             step.output = "Search complete."
+            success = True
+
+            # Count sources from citations
+            try:
+                grounding = response.candidates[0].grounding_metadata
+                if grounding and grounding.grounding_chunks:
+                    sources_found = len(grounding.grounding_chunks)
+            except (AttributeError, IndexError):
+                pass
 
         except Exception as e:
+            logger.error("Search failed for query: %s", message.content[:100], exc_info=True)
             full_response = f"An error occurred: {e}"
             step.output = f"Search failed: {e}"
+
+    elapsed = time.time() - start_time
+    track_query(message.content, elapsed, sources_found, success)
 
     await cl.Message(content=full_response).send()
 

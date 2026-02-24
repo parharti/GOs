@@ -213,12 +213,17 @@ jobs:
             (DB queries, API calls).
           - Keep it readable (max ~30 nodes). If the PR is large, focus on
             the most critical path.
-          - IMPORTANT: Do NOT use emojis or special unicode characters inside
-            Mermaid node labels or edge labels. GitHub's Mermaid renderer
-            cannot parse them and will fail. Use plain text only
-            (e.g., "CRITICAL: Infinite Loop" not "🔴 Infinite Loop").
-          - Do NOT use parentheses inside node labels. Replace them with
-            dashes or remove them (e.g., "O n-squared" not "O(n squared)").
+          - STRICT MERMAID SYNTAX RULES for GitHub compatibility:
+            1. Do NOT use emojis or special unicode characters in node/edge labels.
+            2. Do NOT use double quotes inside node labels. Use single words or
+               short phrases without any quotes.
+            3. Do NOT use parentheses inside node labels. Use dashes instead.
+            4. Use simple bracket syntax: A[Start] not A["Start"].
+            5. For nodes with multi-word labels, just use brackets: A[Fetch Data]
+            6. Avoid all special characters in labels: no quotes, no parentheses,
+               no colons, no semicolons, no angle brackets.
+            7. Good example: A[Start] --> B[Log Entry]; B --> C{Is Valid};
+            8. Bad example: A["Start"] --> B[Log "entry"]; B --> C{Is Valid?};
 
           {sql_section}
 

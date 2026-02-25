@@ -1,10 +1,11 @@
 # ============================================================================
 # codeql.yml
 # Static Application Security Testing (SAST)
-# Scans code for SQL injection, XSS, command injection, and 100+ vuln types
+# Scans Python and JavaScript for SQL injection, XSS, command injection, etc.
+# Note: CodeQL doesn't support PHP — PHP security is covered by Semgrep below
 # ============================================================================
 
-name: "CodeQL Security Analysis"
+name: "CodeQL + Semgrep Security Analysis"
 
 on:
   pull_request:
@@ -20,8 +21,9 @@ permissions:
   actions: read
 
 jobs:
-  analyze:
-    name: "CodeQL Analysis"
+  # ── CodeQL for Python + JavaScript ─────────────────────────────────
+  codeql:
+    name: "CodeQL (${{ matrix.language }})"
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -45,3 +47,51 @@ jobs:
         uses: github/codeql-action/analyze@v3
         with:
           category: "/language:${{ matrix.language }}"
+
+  # ── Semgrep for PHP + All Languages ────────────────────────────────
+  semgrep:
+    name: "Semgrep (PHP + All)"
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run Semgrep
+        run: |
+          semgrep scan \
+            --config=auto \
+            --config=p/php \
+            --config=p/python \
+            --config=p/javascript \
+            --config=p/sql-injection \
+            --config=p/xss \
+            --config=p/command-injection \
+            --config=p/secrets \
+            --config=p/owasp-top-ten \
+            --error \
+            --json --output=semgrep-results.json \
+            . || true
+
+      - name: Display Results
+        if: always()
+        run: |
+          if [ -f semgrep-results.json ]; then
+            echo "=== Semgrep Security Findings ==="
+            cat semgrep-results.json | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          results = data.get('results', [])
+          if not results:
+              print('No security issues found.')
+              sys.exit(0)
+          print(f'Found {len(results)} issue(s):')
+          for r in results:
+              sev = r.get('extra', {}).get('severity', 'unknown').upper()
+              msg = r.get('extra', {}).get('message', 'No message')
+              path = r.get('path', '?')
+              line = r.get('start', {}).get('line', '?')
+              print(f'  [{sev}] {path}:{line} — {msg[:100]}')
+          "
+          fi

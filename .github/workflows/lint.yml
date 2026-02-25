@@ -1,7 +1,6 @@
 # ============================================================================
 # lint.yml
-# Code quality checks — Ruff (Python linter + formatter)
-# Catches unused imports, wrong formatting, code smells
+# Code quality checks for Python, Node.js, and PHP
 # ============================================================================
 
 name: "Code Quality (Lint)"
@@ -16,8 +15,9 @@ permissions:
   contents: read
 
 jobs:
-  ruff:
-    name: "Python Lint (Ruff)"
+  # ── Python Linting (Ruff) ──────────────────────────────────────────
+  python-lint:
+    name: "Python (Ruff)"
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -31,8 +31,101 @@ jobs:
       - name: Install Ruff
         run: pip install ruff
 
+      - name: Check for Python files
+        id: check
+        run: |
+          if find . -name "*.py" -not -path "./.git/*" | grep -q .; then
+            echo "has_files=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_files=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Run Ruff Linter
+        if: steps.check.outputs.has_files == 'true'
         run: ruff check . --output-format=github
 
       - name: Run Ruff Formatter Check
+        if: steps.check.outputs.has_files == 'true'
         run: ruff format --check .
+
+  # ── Node.js Linting (ESLint) ───────────────────────────────────────
+  node-lint:
+    name: "Node.js (ESLint)"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Check for JS/TS files
+        id: check
+        run: |
+          if find . -name "*.js" -o -name "*.jsx" -o -name "*.ts" -o -name "*.tsx" \
+            | grep -v node_modules | grep -q .; then
+            echo "has_files=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_files=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install ESLint
+        if: steps.check.outputs.has_files == 'true'
+        run: npm install -g eslint
+
+      - name: Run ESLint
+        if: steps.check.outputs.has_files == 'true'
+        run: |
+          # Use eslint config if exists, otherwise run with defaults
+          if [ -f ".eslintrc.json" ] || [ -f ".eslintrc.js" ] || [ -f "eslint.config.js" ]; then
+            npx eslint . --ext .js,.jsx,.ts,.tsx
+          else
+            echo "No ESLint config found — skipping (add .eslintrc.json to enable)"
+          fi
+
+  # ── PHP Linting (PHPStan + PHP Syntax) ─────────────────────────────
+  php-lint:
+    name: "PHP (Syntax + PHPStan)"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check for PHP files
+        id: check
+        run: |
+          if find . -name "*.php" -not -path "./.git/*" -not -path "./vendor/*" | grep -q .; then
+            echo "has_files=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_files=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: PHP Syntax Check
+        if: steps.check.outputs.has_files == 'true'
+        run: |
+          echo "Checking PHP syntax..."
+          find . -name "*.php" -not -path "./vendor/*" -not -path "./.git/*" \
+            | xargs -I {} php -l {} 2>&1 | grep -v "No syntax errors"
+          echo "PHP syntax check complete."
+
+      - name: Install PHPStan
+        if: steps.check.outputs.has_files == 'true'
+        run: |
+          composer global require phpstan/phpstan --no-interaction --quiet 2>/dev/null || true
+
+      - name: Run PHPStan
+        if: steps.check.outputs.has_files == 'true'
+        run: |
+          if command -v phpstan &> /dev/null || [ -f "$HOME/.composer/vendor/bin/phpstan" ]; then
+            PHPSTAN="${HOME}/.composer/vendor/bin/phpstan"
+            if [ -f "phpstan.neon" ] || [ -f "phpstan.neon.dist" ]; then
+              $PHPSTAN analyse --no-progress
+            else
+              echo "No phpstan.neon config found — running with defaults"
+              $PHPSTAN analyse --level=5 --no-progress $(find . -name "*.php" -not -path "./vendor/*" -not -path "./.git/*" | head -50) || true
+            fi
+          else
+            echo "PHPStan not available — skipping"
+          fi

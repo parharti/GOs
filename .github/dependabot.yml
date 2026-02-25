@@ -1,7 +1,7 @@
 # ============================================================================
 # dependabot.yml
 # Auto-creates PRs when dependencies have known vulnerabilities (CVEs)
-# Also keeps packages up to date weekly
+# Covers: Python (pip), Node.js (npm), PHP (composer), GitHub Actions
 # ============================================================================
 
 version: 2
@@ -9,6 +9,32 @@ version: 2
 updates:
   # Python (pip) dependencies
   - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "automated"
+    commit-message:
+      prefix: "[DEPS]"
+
+  # Node.js (npm) dependencies
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "automated"
+    commit-message:
+      prefix: "[DEPS]"
+
+  # PHP (composer) dependencies
+  - package-ecosystem: "composer"
     directory: "/"
     schedule:
       interval: "weekly"

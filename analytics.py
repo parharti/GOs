@@ -2,7 +2,7 @@
 Search Analytics Module for TNe-GA GO Search.
 
 Tracks user queries, response times, and search patterns.
-Stores analytics data in a local JSON file for dashboard reporting.
+Stores analytics dat a in a local JSON file for dashboard reporting.
 """
 
 import json

@@ -1,0 +1,31 @@
+# ============================================================================
+# gitleaks.yml
+# Scans every PR and push for leaked secrets (API keys, passwords, tokens)
+# ============================================================================
+
+name: "Secret Detection (GitLeaks)"
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main, develop, staging]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  gitleaks:
+    name: "Scan for Leaked Secrets"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run GitLeaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

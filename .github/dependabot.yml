@@ -1,0 +1,34 @@
+# ============================================================================
+# dependabot.yml
+# Auto-creates PRs when dependencies have known vulnerabilities (CVEs)
+# Also keeps packages up to date weekly
+# ============================================================================
+
+version: 2
+
+updates:
+  # Python (pip) dependencies
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "automated"
+    commit-message:
+      prefix: "[DEPS]"
+
+  # GitHub Actions versions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "ci"
+    commit-message:
+      prefix: "[CI]"

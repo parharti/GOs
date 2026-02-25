@@ -1,0 +1,38 @@
+# ============================================================================
+# lint.yml
+# Code quality checks — Ruff (Python linter + formatter)
+# Catches unused imports, wrong formatting, code smells
+# ============================================================================
+
+name: "Code Quality (Lint)"
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main, develop, staging]
+
+permissions:
+  contents: read
+
+jobs:
+  ruff:
+    name: "Python Lint (Ruff)"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Ruff
+        run: pip install ruff
+
+      - name: Run Ruff Linter
+        run: ruff check . --output-format=github
+
+      - name: Run Ruff Formatter Check
+        run: ruff format --check .

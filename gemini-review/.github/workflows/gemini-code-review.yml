@@ -157,25 +157,49 @@ jobs:
           prompt = f"""You are a **senior code reviewer** for a team that works with
           Python, PHP, Node.js, React, and PostgreSQL.
 
-          Review the following pull request code and produce a structured report
-          covering ALL of the sections below.  Follow the team's style guide
-          (logging required, no infinite loops, clear logic, SQL safety).
+          Review the following pull request code and produce a structured report.
+          Follow the team's style guide (logging required, no infinite loops,
+          clear logic, SQL safety).
+
+          IMPORTANT FORMAT RULE: Start with a quick-glance summary of ALL key
+          issues FIRST, then provide detailed analysis in the sections below.
+          This lets reviewers immediately see what matters most.
 
           ---
 
-          ## 1. Logical Errors
+          ## Key Issues at a Glance
+
+          Start the report with a summary table of ALL issues found across
+          every category. Sort by severity (Critical first, then Warning,
+          then Info). This table should give the reviewer everything they
+          need in one look.
+
+          | # | Severity | Issue | File | Line | Category |
+          |---|----------|-------|------|------|----------|
+
+          Severity levels: 🔴 Critical · 🟡 Warning · 🔵 Info
+
+          **Merge Recommendation:** ✅ Approve / ⚠️ Approve with comments / ❌ Request changes
+
+          **Top 3 fixes required before merge:** (numbered list)
+
+          ---
+
+          Now provide the detailed breakdown:
+
+          ## 1. Logical Errors (Detail)
           - Identify bugs, off-by-one errors, null/undefined risks, race conditions,
             incorrect boolean logic, wrong operator usage, unreachable code.
-          - For each issue give: file, line (approx), severity (🔴 Critical / 🟡 Warning / 🔵 Info),
-            and a suggested fix.
+          - For each issue give: file, line (approx), severity, description,
+            and a suggested fix with code example.
 
-          ## 2. Loop Analysis
+          ## 2. Loop Analysis (Detail)
           - Find all loops (for, while, foreach, map, reduce, recursive calls).
-          - Flag: potential infinite loops, O(n²)+ nested loops, missing break/return,
+          - Flag: potential infinite loops, O(n squared)+ nested loops, missing break/return,
             large dataset iteration without pagination/streaming.
           - Suggest optimizations where applicable.
 
-          ## 3. Logging Audit
+          ## 3. Logging Audit (Detail)
           - Every function/method/route handler MUST have at least entry-level logging.
           - Flag any function that is missing logging entirely.
           - Check log levels are appropriate (debug vs info vs error).
@@ -189,13 +213,19 @@ jobs:
             (DB queries, API calls).
           - Keep it readable (max ~30 nodes). If the PR is large, focus on
             the most critical path.
+          - STRICT MERMAID SYNTAX RULES for GitHub compatibility:
+            1. Do NOT use emojis or special unicode characters in node/edge labels.
+            2. Do NOT use double quotes inside node labels. Use single words or
+               short phrases without any quotes.
+            3. Do NOT use parentheses inside node labels. Use dashes instead.
+            4. Use simple bracket syntax: A[Start] not A["Start"].
+            5. For nodes with multi-word labels, just use brackets: A[Fetch Data]
+            6. Avoid all special characters in labels: no quotes, no parentheses,
+               no colons, no semicolons, no angle brackets.
+            7. Good example: A[Start] --> B[Log Entry]; B --> C{Is Valid};
+            8. Bad example: A["Start"] --> B[Log "entry"]; B --> C{Is Valid?};
 
           {sql_section}
-
-          ## 6. Overall Summary
-          - Total issues by severity
-          - Merge recommendation: ✅ Approve / ⚠️ Approve with comments / ❌ Request changes
-          - Top 3 things to fix before merge
 
           ---
 
